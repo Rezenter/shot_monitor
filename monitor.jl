@@ -5,56 +5,52 @@ monitor:
 - Date: 2022-03-01
 =#
 
-using HTTP
+using LoggingExtras, Dates
 using Sockets
-using JSON3
+using FileWatching
 
-include("requestHandler.jl")
+const date_format = "HH:MM:SS"
+ENV["JULIA_DEBUG"] = "all";
 
-ENV["JULIA_DEBUG"] = "all"
+timestamp_logger(logger) = TransformerLogger(logger) do log
+  merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+end
 
-@debug "Debug is enabled!"
+ConsoleLogger(stdout, Logging.Debug) |> timestamp_logger |> global_logger
+
+@debug "Debug is enabled!";
 
 if Threads.nthreads() == 1
-    @warn "Julia is running on a single thread!"
+    @warn "Julia is running on a single thread!";
+end
+const path = "V:\\SHOTN.txt";
+const timeout = 1; # second
+
+function send_shotn()
+     soc=UDPSocket();
+     send(soc, ip"192.168.10.255", 8888, b"00");
+     sleep(timeout);
 end
 
-function handler(req::HTTP.Request)
-    if req.method == "GET"
-        if req.target == "/"
-            req.target =  "html/julia_index.html"
-        else
-            req.target = req.target[2:end]
-        end
-        if !isfile(req.target)
-            @debug req.target
-            return HTTP.Response(404, "Whoops, file not found.")
-        end
-        out::String = "Failed to open file"
-        open(req.target) do file
-            out = read(file, String)
-        end
-        return HTTP.Response(200, out)
+function watch()
+    #path::String = "\\\\192.168.101.24\\SHOTN.txt";
+    test::FileWatching.FileEvent = watch_file(path::String, timeout);
+    if test.changed
+       @info "\n-----------\nShotn changed!\n--------------\n";
+       open(path::String, "r") do file
+             str = readline(file);
+             @debug str
+       end
+       #check sht^ if exists => new shot. else:sht ready
+       send_shotn();
+       return nothing;
+    elseif !test.timedout
+       @error "WTF?"
     end
-
-
-    if size(HTTP.payload(req)) == 0
-        #@debug req
-        return HTTP.Response(404, "No payload found in request.")
-    else
-        return HTTP.Response(200, JSON3.write(RequestHandler.handle(JSON3.read(HTTP.payload(req)))))
-    end
-
+    return nothing;
 end
 
-@info "serving..."
-HTTP.serve(ip"172.16.12.130", 8081) do request::HTTP.Request
-    return handler(request)  # for easy debug
-    try
-        return handler(request)
-    catch e
-        @error "Cought an error in the serve() loop"
-        @debug e
-        return HTTP.Response(404, "Error: $e")
-    end
+@info "serving...";
+while true
+    watch();
 end
